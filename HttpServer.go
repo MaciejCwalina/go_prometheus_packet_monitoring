@@ -20,7 +20,7 @@ func (hs HttpServer) StartHttpServer() net.Listener {
 }
 
 func (hs HttpServer) HandleIncomingConnections(listener net.Listener) net.Conn {
-	conn, err := listener.Accept() //thread blocking
+	conn, err := listener.Accept()
 	if err != nil {
 		log.Fatal("Failed to accept connection")
 	}
@@ -31,7 +31,7 @@ func (hs HttpServer) HandleIncomingConnections(listener net.Listener) net.Conn {
 func (hs HttpServer) ReadAllBytesFromClient(validDataChannel chan []byte, conn net.Conn) {
 	go func() {
 		for {
-			byteArr := make([]byte, 1024)
+			byteArr := make([]byte, 4096)
 			readLength, _ := conn.Read(byteArr)
 			validDataChannel <- byteArr[:readLength]
 		}

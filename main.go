@@ -4,13 +4,16 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 func ParseData(validDataChannel chan []byte, packetChannel chan []Packet) {
 	go func() {
 		for {
+			start := time.Now()
 			packetInfo := string(<-validDataChannel)
 			packetInfoSplit := strings.Split(packetInfo, "\n")
 			packets := []Packet{}
@@ -21,29 +24,42 @@ func ParseData(validDataChannel chan []byte, packetChannel chan []Packet) {
 					continue
 				}
 
-				packet := Packet{}
+				var packet Packet
+				var err error
 				if packetSplit[5] == "UDP," {
-					packet = CreateUDPPacket(packetSplit)
+					packet, err = CreateUDPPacket(packetSplit)
 				} else {
-					packet = CreateTCPPacket(packetSplit)
+					packet, err = CreateTCPPacket(packetSplit)
 				}
 
-				if packet.Size == -1 {
+				if err != nil {
 					continue
 				}
 
 				packets = append(packets, packet)
 			}
 
+			log.Println(time.Since(start))
 			packetChannel <- packets
 		}
 	}()
 }
+
 func RecordMetrics(packetsChannel chan []Packet) {
-	for {
-		SetNetworkGuages(<-packetsChannel)
-	}
+	go func() {
+		for {
+			SetNetworkGuages(<-packetsChannel)
+		}
+	}()
 }
+
+var (
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+)
 
 func main() {
 	httpServer := HttpServer{
@@ -53,8 +69,8 @@ func main() {
 
 	listener := httpServer.StartHttpServer()
 	conn := httpServer.HandleIncomingConnections(listener)
-	validDataChannel := make(chan []byte)
-	packetChannel := make(chan []Packet)
+	validDataChannel := make(chan []byte, 128)
+	packetChannel := make(chan []Packet, 128)
 	httpServer.ReadAllBytesFromClient(validDataChannel, conn)
 	ParseData(validDataChannel, packetChannel)
 	RecordMetrics(packetChannel)
