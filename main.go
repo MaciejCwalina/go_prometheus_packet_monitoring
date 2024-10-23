@@ -12,9 +12,22 @@ import (
 
 func ParseData(validDataChannel chan []byte, packetChannel chan []Packet) {
 	go func() {
+		var bytes []byte
 		for {
+			select {
+			case b, ok := <-validDataChannel:
+				if ok {
+					bytes = b
+				} else {
+					log.Fatal("Channel is closed this should never happen")
+				}
+
+			default:
+				continue
+			}
+
 			start := time.Now()
-			packetInfo := string(<-validDataChannel)
+			packetInfo := string(bytes)
 			packetInfoSplit := strings.Split(packetInfo, "\n")
 			packets := []Packet{}
 			for _, packet := range packetInfoSplit {
@@ -40,7 +53,9 @@ func ParseData(validDataChannel chan []byte, packetChannel chan []Packet) {
 			}
 
 			log.Println(time.Since(start))
-			packetChannel <- packets
+			if len(packetChannel) < cap(packetChannel) {
+				packetChannel <- packets
+			}
 		}
 	}()
 }
@@ -48,14 +63,16 @@ func ParseData(validDataChannel chan []byte, packetChannel chan []Packet) {
 func RecordMetrics(packetsChannel chan []Packet) {
 	go func() {
 		for {
-			SetNetworkGuages(<-packetsChannel)
+			if len(packetsChannel) < cap(packetsChannel) {
+				SetNetworkGuages(<-packetsChannel)
+			}
 		}
 	}()
 }
 
 var (
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
+		Addr:     "apollo-3-prot.local:6379",
 		Password: "",
 		DB:       0,
 	})
@@ -72,6 +89,7 @@ func main() {
 	validDataChannel := make(chan []byte, 128)
 	packetChannel := make(chan []Packet, 128)
 	httpServer.ReadAllBytesFromClient(validDataChannel, conn)
+
 	ParseData(validDataChannel, packetChannel)
 	RecordMetrics(packetChannel)
 	http.Handle("/metrics", promhttp.Handler())

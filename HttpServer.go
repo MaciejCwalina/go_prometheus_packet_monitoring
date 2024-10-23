@@ -12,6 +12,7 @@ type HttpServer struct {
 
 func (hs HttpServer) StartHttpServer() net.Listener {
 	listener, err := net.Listen(hs.serverType, hs.port)
+	log.Println("Starting Http Server")
 	if err != nil {
 		log.Fatal(err.Error())
 	}
@@ -25,6 +26,7 @@ func (hs HttpServer) HandleIncomingConnections(listener net.Listener) net.Conn {
 		log.Fatal("Failed to accept connection")
 	}
 
+	log.Println("Found a client")
 	return conn
 }
 
@@ -33,7 +35,9 @@ func (hs HttpServer) ReadAllBytesFromClient(validDataChannel chan []byte, conn n
 		for {
 			byteArr := make([]byte, 4096)
 			readLength, _ := conn.Read(byteArr)
-			validDataChannel <- byteArr[:readLength]
+			if len(validDataChannel) < cap(validDataChannel) {
+				validDataChannel <- byteArr[:readLength]
+			}
 		}
 	}()
 }

@@ -12,4 +12,5 @@ RUN apk --no-cache add ca-certificates
 COPY --from=builder /go/bin/app /app
 ENTRYPOINT /app
 LABEL Name=goprometheuspacketmonitoring Version=0.0.1
-EXPOSE 3000
+EXPOSE 5145
+EXPOSE 2115

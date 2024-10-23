@@ -156,7 +156,7 @@ func CreateUDPPacket(packetSplit []string) (Packet, error) {
 	}
 
 	redisCmd := redisClient.Get(context.Background(), dest)
-	if redisCmd != nil {
+	if redisCmd == nil {
 		for i := 0; i < len(srcSplit); i++ {
 			if i == len(srcSplit)-1 {
 				break
