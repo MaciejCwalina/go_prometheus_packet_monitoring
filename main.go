@@ -1,10 +1,8 @@
 package main
 
 import (
-	"log"
-	"net/http"
+	"go_prometheus_packet_monitoring/TSharkWrapper"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -31,14 +29,13 @@ var (
 )
 
 func main() {
-	//listener := httpServer.StartHttpServer()
-	//conn := httpServer.HandleIncomingConnections(listener)
-
-	validDataChannel := make(chan []byte, 128)
-	packetChannel := make(chan []Packet, 128)
-	//httpServer.ReadAllBytesFromClient(validDataChannel, conn)
-	ParseData(validDataChannel, packetChannel)
-	RecordMetrics(packetChannel)
-	http.Handle("/metrics", promhttp.Handler())
-	log.Fatal(http.ListenAndServe(":2115", nil))
+	tshark := TSharkWrapper.NewTShark()
+	tshark.Run()
+	unParsedDataChannel := make(chan string, 256)
+	packetChannel := make(chan []Packet, 256)
+	go tshark.RedirectOutputToChannelAsync(unParsedDataChannel)
+	go ParseDataToPacketsAsync(unParsedDataChannel, packetChannel)
+	//RecordMetrics(packetChannel)
+	//http.Handle("/metrics", promhttp.Handler())
+	//log.Fatal(http.ListenAndServe(":2115", nil))
 }

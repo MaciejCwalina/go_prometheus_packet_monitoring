@@ -28,6 +28,8 @@ func (tshark *TShark) RedirectOutputToChannelAsync(unParsedDataChannel chan stri
 			log.Fatal("Unable to get the output of tshark due to: ", err.Error())
 		}
 
-		unParsedDataChannel <- string(bytes)
+		if len(unParsedDataChannel) < cap(unParsedDataChannel) {
+			unParsedDataChannel <- string(bytes)
+		}
 	}
 }

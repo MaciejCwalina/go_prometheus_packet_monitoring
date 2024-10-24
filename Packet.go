@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"strconv"
+	"strings"
 
 	"io"
 	"log"
@@ -35,10 +38,91 @@ type PacketInfo struct {
 }
 
 type Packet struct {
-	Dest       string
-	Src        string
-	Size       int
-	packetInfo PacketInfo
+	Dest           string
+	Src            string
+	Size           int
+	DestPacketInfo PacketInfo
+}
+
+func ParseDataToPacketsAsync(unParsedDataChannel chan string, packetsChannel chan []Packet) {
+	for {
+		var data string
+		select {
+		case d, ok := <-unParsedDataChannel:
+			if ok {
+				data = d
+			} else {
+				log.Fatal("Failed to read from channel, this should never happen")
+			}
+
+		default:
+			continue
+		}
+
+		dataSplit := strings.Split(data, "\n")
+		var packets []Packet
+		for _, dataEntry := range dataSplit {
+			dataSplitSpace := strings.Split(dataEntry, " ")
+			ipAddresses := strings.Split(dataSplitSpace[0], ",")
+			size, err := strconv.Atoi(dataSplitSpace[1])
+			if err != nil {
+				log.Println("Cannot get the size of the packet reason: ", err.Error())
+				continue
+			}
+
+			source := ipAddresses[0]
+			dest := ipAddresses[1]
+			packetInfo, err := GetPacketInfoFromRedis(dest)
+			if err != nil {
+				log.Println("Failed to get the packet info from redis reason: ", err.Error())
+				continue
+			}
+
+			packet := Packet{
+				Src:            source,
+				Dest:           dest,
+				Size:           size,
+				DestPacketInfo: packetInfo,
+			}
+
+			packets = append(packets, packet)
+			if len(packetsChannel) < cap(packetsChannel) {
+				packetsChannel <- packets
+			}
+		}
+	}
+}
+
+func GetPacketInfoFromRedis(ipAddress string) (PacketInfo, error) {
+	redisCmd := redisClient.Get(context.Background(), ipAddress)
+	if redisCmd == nil {
+		packetInfo, err := GetIpInfo(ipAddress)
+		if err != nil {
+			return PacketInfo{}, err
+		}
+
+		bytes, err := json.Marshal(packetInfo)
+
+		if err != nil {
+			return PacketInfo{}, err
+		}
+
+		redisClient.Set(context.Background(), ipAddress, bytes, 0)
+		return packetInfo, nil
+	}
+
+	bytes, err := redisCmd.Bytes()
+	if err != nil {
+		return PacketInfo{}, err
+	}
+
+	var packetInfo PacketInfo
+	err = json.Unmarshal(bytes, &packetInfo)
+	if err != nil {
+		return PacketInfo{}, err
+	}
+
+	return packetInfo, nil
 }
 
 func GetIpInfo(ipAdrress string) (PacketInfo, error) {
