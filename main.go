@@ -1,40 +1,34 @@
 package main
 
 import (
+	"log"
+	"net/http"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
-func ParseData(validDataChannel chan []byte, packetChannel chan []Packet) {
-
-}
-
-func RecordMetrics(packetsChannel chan []Packet) {
-	go func() {
-		for {
-			if len(packetsChannel) < cap(packetsChannel) {
-				SetNetworkGuages(<-packetsChannel)
-			}
+func RecordMetricsAsync(packetChannel chan Packet) {
+	for {
+		if len(packetChannel) < cap(packetChannel) {
+			SetNetworkGuages(<-packetChannel)
 		}
-	}()
+	}
 }
 
-var (
+var redisClient *redis.Client
+
+func main() {
+	ReadConfigFromFile()
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "192.168.20.119:6379",
+		Addr:     configInstance.RedisDataBaseAddress,
 		Password: "",
 		DB:       0,
 	})
-)
-
-func main() {
 
 	packetChannel := make(chan Packet, 256)
 	go CapturePacketsAsync(packetChannel)
-	for {
-		_ = <-packetChannel
-	}
-
-	//RecordMetrics(packetChannel)
-	//http.Handle("/metrics", promhttp.Handler())
-	//log.Fatal(http.ListenAndServe(":2115", nil))
+	go RecordMetricsAsync(packetChannel)
+	http.Handle("/metrics", promhttp.Handler())
+	log.Fatal(http.ListenAndServe(":2115", nil))
 }

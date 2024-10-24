@@ -49,7 +49,7 @@ type Packet struct {
 }
 
 func CapturePacketsAsync(packetChannel chan Packet) {
-	handle, err := pcap.OpenLive("ens3", 68500, true, pcap.BlockForever)
+	handle, err := pcap.OpenLive(configInstance.InterfaceName, 68500, true, pcap.BlockForever)
 	if err != nil {
 		log.Fatal(err)
 	}

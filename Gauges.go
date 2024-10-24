@@ -16,12 +16,6 @@ var (
 	)
 )
 
-func SetNetworkGuages(packets []Packet) {
-	for _, packet := range packets {
-		if packet.Size <= 0 {
-			continue
-		}
-
-		serverNetworkInformation.WithLabelValues(packet.Src, packet.Dest).Add(float64(packet.Size))
-	}
+func SetNetworkGuages(packet Packet) {
+	serverNetworkInformation.WithLabelValues(packet.Src, packet.Dest).Add(float64(packet.Size))
 }
