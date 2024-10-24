@@ -6,8 +6,9 @@ import (
 )
 
 type Config struct {
-	RedisDataBaseAddress string
-	InterfaceName        string
+	RedisDataBaseAddress      string
+	InterfaceName             string
+	ListOfBlockedCountryCodes []string
 }
 
 var configInstance *Config

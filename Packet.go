@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"time"
 
 	"io"
 	"log"
@@ -58,7 +57,6 @@ func CapturePacketsAsync(packetChannel chan Packet) {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	for packet := range packetSource.Packets() {
-		start := time.Now()
 		ipLayer := packet.Layer(layers.LayerTypeIPv4)
 		if ipLayer == nil {
 			continue
@@ -72,14 +70,19 @@ func CapturePacketsAsync(packetChannel chan Packet) {
 			continue
 		}
 
-		packetChannel <- Packet{
+		packet := Packet{
 			Src:            ip.SrcIP.String(),
 			Dest:           ip.DstIP.String(),
 			Size:           packet.Metadata().Length,
 			DestPacketInfo: packetInfo,
 		}
 
-		log.Println(time.Since(start))
+		err = BlockIpAddress(packet)
+		if err != nil {
+			log.Println(err.Error())
+		}
+
+		packetChannel <- packet
 	}
 }
 
