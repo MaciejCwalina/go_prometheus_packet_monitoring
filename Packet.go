@@ -3,12 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"strconv"
-	"strings"
+	"time"
 
 	"io"
 	"log"
 	"net/http"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	"github.com/redis/go-redis/v9"
 )
 
 type PacketInfo struct {
@@ -44,58 +48,44 @@ type Packet struct {
 	DestPacketInfo PacketInfo
 }
 
-func ParseDataToPacketsAsync(unParsedDataChannel chan string, packetsChannel chan []Packet) {
-	for {
-		var data string
-		select {
-		case d, ok := <-unParsedDataChannel:
-			if ok {
-				data = d
-			} else {
-				log.Fatal("Failed to read from channel, this should never happen")
-			}
+func CapturePacketsAsync(packetChannel chan Packet) {
+	handle, err := pcap.OpenLive("ens3", 68500, true, pcap.BlockForever)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-		default:
+	defer handle.Close()
+
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	for packet := range packetSource.Packets() {
+		start := time.Now()
+		ipLayer := packet.Layer(layers.LayerTypeIPv4)
+		if ipLayer == nil {
 			continue
 		}
 
-		dataSplit := strings.Split(data, "\n")
-		var packets []Packet
-		for _, dataEntry := range dataSplit {
-			dataSplitSpace := strings.Split(dataEntry, " ")
-			ipAddresses := strings.Split(dataSplitSpace[0], ",")
-			size, err := strconv.Atoi(dataSplitSpace[1])
-			if err != nil {
-				log.Println("Cannot get the size of the packet reason: ", err.Error())
-				continue
-			}
+		ip, _ := ipLayer.(*layers.IPv4)
+		packetInfo, err := GetPacketInfoFromRedis(ip.DstIP.String())
 
-			source := ipAddresses[0]
-			dest := ipAddresses[1]
-			packetInfo, err := GetPacketInfoFromRedis(dest)
-			if err != nil {
-				log.Println("Failed to get the packet info from redis reason: ", err.Error())
-				continue
-			}
-
-			packet := Packet{
-				Src:            source,
-				Dest:           dest,
-				Size:           size,
-				DestPacketInfo: packetInfo,
-			}
-
-			packets = append(packets, packet)
-			if len(packetsChannel) < cap(packetsChannel) {
-				packetsChannel <- packets
-			}
+		if err != nil {
+			log.Println(err.Error())
+			continue
 		}
+
+		packetChannel <- Packet{
+			Src:            ip.SrcIP.String(),
+			Dest:           ip.DstIP.String(),
+			Size:           packet.Metadata().Length,
+			DestPacketInfo: packetInfo,
+		}
+
+		log.Println(time.Since(start))
 	}
 }
 
 func GetPacketInfoFromRedis(ipAddress string) (PacketInfo, error) {
 	redisCmd := redisClient.Get(context.Background(), ipAddress)
-	if redisCmd == nil {
+	if redisCmd.Err() == redis.Nil {
 		packetInfo, err := GetIpInfo(ipAddress)
 		if err != nil {
 			return PacketInfo{}, err
@@ -127,7 +117,7 @@ func GetPacketInfoFromRedis(ipAddress string) (PacketInfo, error) {
 
 func GetIpInfo(ipAdrress string) (PacketInfo, error) {
 	var packetInfo PacketInfo
-	response, err := http.Get("https://ip-api.com/json/" + ipAdrress)
+	response, err := http.Get("http://ip-api.com/json/" + ipAdrress)
 	if err != nil {
 		log.Println("Response returned error", err.Error())
 		return packetInfo, err

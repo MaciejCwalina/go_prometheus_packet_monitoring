@@ -1,8 +1,6 @@
 package main
 
 import (
-	"go_prometheus_packet_monitoring/TSharkWrapper"
-
 	"github.com/redis/go-redis/v9"
 )
 
@@ -22,19 +20,20 @@ func RecordMetrics(packetsChannel chan []Packet) {
 
 var (
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:     "apollo-3-prot.local:6379",
+		Addr:     "192.168.20.119:6379",
 		Password: "",
 		DB:       0,
 	})
 )
 
 func main() {
-	tshark := TSharkWrapper.NewTShark()
-	tshark.Run()
-	unParsedDataChannel := make(chan string, 256)
-	packetChannel := make(chan []Packet, 256)
-	go tshark.RedirectOutputToChannelAsync(unParsedDataChannel)
-	go ParseDataToPacketsAsync(unParsedDataChannel, packetChannel)
+
+	packetChannel := make(chan Packet, 256)
+	go CapturePacketsAsync(packetChannel)
+	for {
+		_ = <-packetChannel
+	}
+
 	//RecordMetrics(packetChannel)
 	//http.Handle("/metrics", promhttp.Handler())
 	//log.Fatal(http.ListenAndServe(":2115", nil))
