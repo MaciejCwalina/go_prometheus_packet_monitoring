@@ -19,9 +19,8 @@ func RecordMetricsAsync(packetChannel chan Packet) {
 
 func BlockIpAddress(packet Packet) error {
 	shouldBlock := false
-	log.Println(packet.DestPacketInfo.CountryCode)
 	for _, countryCode := range configInstance.ListOfBlockedCountryCodes {
-		if countryCode == packet.DestPacketInfo.CountryCode {
+		if packet.DestPacketInfo.CountryCode == countryCode {
 			shouldBlock = true
 			break
 		}
