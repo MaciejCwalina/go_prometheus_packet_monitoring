@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+
 	"io"
 	"log"
 	"net/http"
-	"strconv"
-	"strings"
+
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
+	"github.com/redis/go-redis/v9"
 )
 
 type PacketInfo struct {
@@ -38,185 +41,86 @@ type PacketInfo struct {
 }
 
 type Packet struct {
-	Dest       string
-	Src        string
-	Size       int
-	packetInfo PacketInfo
+	Dest           string
+	Src            string
+	Size           int
+	DestPacketInfo PacketInfo
 }
 
-func CreateTCPPacket(packetSplit []string) (Packet, error) {
-	dest := packetSplit[2]
-	src := packetSplit[4]
-	destSplit := strings.Split(dest, ".")
-	srcSplit := strings.Split(src, ".")
-	dest = ""
-	src = ""
-
-	packetSizeString := ""
-	for i := 0; i < len(packetSplit); i++ {
-		if packetSplit[i] == "length" {
-			i++
-			if i >= len(packetSplit) {
-				break
-			}
-
-			packetSizeString = packetSplit[i]
-			break
-		}
-	}
-
-	if len(destSplit) < 4 {
-		return Packet{}, errors.New("the destination IP is less then 4 octets")
-	}
-
-	if len(srcSplit) < 4 {
-		return Packet{}, errors.New("the Source IP is less then 4 octets")
-	}
-
-	if packetSizeString == "" {
-		log.Println("Mangeled Packet cannot get the size!")
-	}
-
-	for i := 0; i < len(destSplit); i++ {
-		if i == len(destSplit)-1 {
-			break
-		}
-
-		dest += destSplit[i] + "."
-	}
-
-	stringCmd := redisClient.Get(context.Background(), dest)
-	if stringCmd == nil {
-		for i := 0; i < len(srcSplit); i++ {
-			if i == len(srcSplit)-1 {
-				break
-			}
-
-			src += srcSplit[i] + "."
-		}
-
-		packetSize, err := strconv.Atoi(packetSizeString)
-		if err != nil {
-			return Packet{}, errors.New("failed to convert PacketSizeString to int, CreateTCPPacket")
-		}
-
-		packetInfo, _ := GetIpInfo(dest)
-		p := Packet{
-			dest,
-			src,
-			packetSize,
-			packetInfo,
-		}
-
-		bytes, err := json.Marshal(p)
-		if err != nil {
-			return p, err
-		}
-
-		redisClient.Set(context.Background(), dest, bytes, 0)
-		return p, nil
-	}
-
-	bytes, err := stringCmd.Bytes()
+func CapturePacketsAsync(packetChannel chan Packet) {
+	handle, err := pcap.OpenLive(configInstance.InterfaceName, 68500, true, pcap.BlockForever)
 	if err != nil {
-		return Packet{}, err
+		log.Fatal(err)
 	}
 
-	var packet Packet
-	err = json.Unmarshal(bytes, &packet)
-	if err != nil {
-		return packet, err
-	}
+	defer handle.Close()
 
-	packetSize, err := strconv.Atoi(packetSizeString)
-	if err != nil {
-		return Packet{}, errors.New("failed to convert PacketSizeString to int, CreateTCPPacket")
-	}
-
-	packet.Size = packetSize
-	return packet, nil
-}
-
-func CreateUDPPacket(packetSplit []string) (Packet, error) {
-	dest := packetSplit[2]
-	src := packetSplit[4]
-	destSplit := strings.Split(dest, ".")
-	srcSplit := strings.Split(src, ".")
-	dest = ""
-	src = ""
-	for i := 0; i < len(destSplit); i++ {
-		if i == len(destSplit)-1 {
-			break
+	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
+	for packet := range packetSource.Packets() {
+		ipLayer := packet.Layer(layers.LayerTypeIPv4)
+		if ipLayer == nil {
+			continue
 		}
 
-		dest += destSplit[i]
-		if i != len(destSplit)-2 {
-			dest += "."
-		}
-	}
+		ip, _ := ipLayer.(*layers.IPv4)
+		packetInfo, err := GetPacketInfoFromRedis(ip.DstIP.String())
 
-	redisCmd := redisClient.Get(context.Background(), dest)
-	if redisCmd == nil {
-		for i := 0; i < len(srcSplit); i++ {
-			if i == len(srcSplit)-1 {
-				break
-			}
-
-			src += srcSplit[i]
-			if i != len(srcSplit)-2 {
-				src += "."
-			}
-		}
-
-		packetInfo, err := GetIpInfo(dest)
 		if err != nil {
-			log.Println("Failed to get IP info due to ", err.Error())
-		}
-
-		packetSize, err := strconv.Atoi(packetSplit[7])
-		if err != nil {
-			log.Println("Cannot parse PacketSize!")
-			return Packet{}, err
+			log.Println(err.Error())
+			continue
 		}
 
 		packet := Packet{
-			dest,
-			src,
-			packetSize,
-			packetInfo,
+			Src:            ip.SrcIP.String(),
+			Dest:           ip.DstIP.String(),
+			Size:           packet.Metadata().Length,
+			DestPacketInfo: packetInfo,
 		}
 
-		bytes, err := json.Marshal(packet)
+		err = BlockIpAddress(packet)
 		if err != nil {
-			return Packet{}, err
+			log.Println(err.Error())
 		}
 
-		redisClient.Set(context.Background(), dest, bytes, 0)
+		packetChannel <- packet
+	}
+}
+
+func GetPacketInfoFromRedis(ipAddress string) (PacketInfo, error) {
+	redisCmd := redisClient.Get(context.Background(), ipAddress)
+	if redisCmd.Err() == redis.Nil {
+		packetInfo, err := GetIpInfo(ipAddress)
+		if err != nil {
+			return PacketInfo{}, err
+		}
+
+		bytes, err := json.Marshal(packetInfo)
+
+		if err != nil {
+			return PacketInfo{}, err
+		}
+
+		redisClient.Set(context.Background(), ipAddress, bytes, 0)
+		return packetInfo, nil
 	}
 
-	var packet Packet
-	packetAsBytes, err := redisCmd.Bytes()
+	bytes, err := redisCmd.Bytes()
 	if err != nil {
-		return Packet{}, nil
+		return PacketInfo{}, err
 	}
 
-	err = json.Unmarshal(packetAsBytes, &packet)
+	var packetInfo PacketInfo
+	err = json.Unmarshal(bytes, &packetInfo)
 	if err != nil {
-		return Packet{}, err
+		return PacketInfo{}, err
 	}
 
-	packetSize, err := strconv.Atoi(packetSplit[7])
-	if err != nil {
-		return Packet{}, err
-	}
-
-	packet.Size = packetSize
-	return packet, nil
+	return packetInfo, nil
 }
 
 func GetIpInfo(ipAdrress string) (PacketInfo, error) {
 	var packetInfo PacketInfo
-	response, err := http.Get("https://ip-api.com/json/" + ipAdrress)
+	response, err := http.Get("http://ip-api.com/json/" + ipAdrress)
 	if err != nil {
 		log.Println("Response returned error", err.Error())
 		return packetInfo, err
